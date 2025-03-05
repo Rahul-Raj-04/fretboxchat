@@ -1,0 +1,204 @@
+/* eslint-disable react/prop-types */
+import { useEffect, useState } from "react";
+import { useSocket } from "../Context/SocketContext";
+import { useMessages } from "../Context/MessageContext";
+import Cookies from "js-cookie";
+import { Baseurl } from "../Config";
+
+const ChatInput = ({ chatId }) => {
+  const userId = Cookies.get("userId");
+  const { socket } = useSocket();
+  const { setMessages: updateMessages } = useMessages();
+  const [socketmessage, setSocketmessage] = useState("");
+  const [userName, setUserName] = useState("Loading...");
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [showPopup, setShowPopup] = useState(false);
+
+  // 📌 Image Select Handler
+
+  useEffect(() => {
+    const fetchUserName = async () => {
+      try {
+        const response = await fetch(
+          `${Baseurl}/api/v1/user/currentuser?userId=${userId}`
+        );
+        const data = await response.json();
+        setUserName(data.data.firstName || "Unknown User");
+      } catch (error) {
+        console.error("Error fetching user:", error);
+        setUserName("Unknown User");
+      }
+    };
+
+    if (userId) {
+      fetchUserName();
+    }
+  }, [userId]);
+  console.log("username", userName);
+
+  const currentUser = {
+    _id: userId,
+    avatar:
+      "https://themesbrand.com/chatvia-tailwind/layouts/assets/images/avatar-1.jpg",
+    name: userName,
+  };
+
+  const handleSendMessage = async () => {
+    if (socketmessage.trim()) {
+      const now = new Date();
+      const formattedTime = now.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      const tempId = Math.random().toString(36).substring(7); // Temporary ID
+      const newMessage = {
+        _id: tempId, // Temporary unique ID
+        avatar: currentUser.avatar,
+        name: currentUser.name,
+        text: socketmessage,
+        time: formattedTime,
+        content: socketmessage,
+        chatId,
+        sender: { _id: userId },
+        createdAt: new Date().toISOString(),
+        isTemporary: true, // Temporary flag
+      };
+
+      // 🔹 Pehle local state me message add kar do
+      updateMessages((prevMessages) => [...prevMessages, newMessage]);
+
+      // 🔹 Socket emit karo
+      socket.emit("message", newMessage, async (serverResponse) => {
+        if (serverResponse && serverResponse._id) {
+          // Jab API response aaye, tab temporary message ko replace karna
+          updateMessages((prevMessages) =>
+            prevMessages.map((msg) =>
+              msg._id === tempId
+                ? { ...msg, _id: serverResponse._id, isTemporary: false }
+                : msg
+            )
+          );
+        }
+      });
+
+      // 🔹 API me bhi send karo
+      try {
+        const response = await fetch(`${Baseurl}/api/v1/message`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Cookies.get("accessToken")}`,
+          },
+          body: JSON.stringify({ ...newMessage, _id: undefined }), // API ke liye temporary _id remove karein
+        });
+
+        const data = await response.json();
+        if (data && data._id) {
+          updateMessages((prevMessages) =>
+            prevMessages.map((msg) =>
+              msg._id === tempId
+                ? { ...msg, _id: data._id, isTemporary: false }
+                : msg
+            )
+          );
+        }
+      } catch (error) {
+        console.error("API Error:", error);
+      }
+
+      // 🔹 Input field clear karo
+      setSocketmessage("");
+    }
+  };
+  const handleImageSelect = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const imageUrl = URL.createObjectURL(file);
+      setSelectedImage(imageUrl);
+      setShowPopup(false);
+    }
+  };
+  return (
+    <>
+      <footer className="p-4 bg-white border-t border-gray-100 sticky bottom-0">
+        <div className="flex gap-2 items-center">
+          <button
+            className="text-gray-500 text-16 border border-gray-300 rounded-lg px-3 py-2"
+            onClick={() => setShowPopup(!showPopup)}
+          >
+            {showPopup ? (
+              <i className="ri-close-circle-fill text-2xl"></i>
+            ) : (
+              <i className="ri-file-add-fill text-2xl"></i>
+            )}
+          </button>
+          {showPopup && (
+            <div className="absolute bottom-24 left-2   rounded-xl p-2 w-52 shadow-2xl bg-gray-200">
+              <ul className="space-y-2">
+                <li className="flex items-center gap-2 p-2 hover:bg-white cursor-pointer rounded-md">
+                  📄 Document
+                </li>
+                <li className="flex items-center gap-2 p-2 hover:bg-white cursor-pointer rounded-md">
+                  <label
+                    htmlFor="imageUpload"
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    🖼️ Photos & Videos
+                  </label>
+                  <input
+                    type="file"
+                    id="imageUpload"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageSelect}
+                    
+                  />
+                </li>
+                <li className="flex items-center gap-2 p-2 hover:bg-white cursor-pointer rounded-md">
+                  📷 Camera
+                </li>
+                <li className="flex items-center gap-2 p-2 hover:bg-white cursor-pointer rounded-md">
+                  👤 Contact
+                </li>
+                <li className="flex items-center gap-2 p-2 hover:bg-white cursor-pointer rounded-md">
+                  📊 Poll
+                </li>
+                <li className="flex items-center gap-2 p-2 hover:bg-white cursor-pointer rounded-md">
+                  🌟 New Sticker
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {selectedImage && (
+            <div className="ml-2">
+              <img
+                src={selectedImage}
+                alt="Preview"
+                className="w-20 h-20 object-cover rounded-lg border"
+              />
+            </div>
+          )}
+          <input
+            type="text"
+            className="w-[70%] border border-gray-300 rounded-lg p-2 text-14 bg-gray-50 placeholder-gray-500"
+            placeholder="Enter Message..."
+            value={socketmessage}
+            onChange={(e) => setSocketmessage(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+          />
+
+          <button
+            className="text-white bg-[#00afef] px-3 py-2 rounded-lg"
+            onClick={handleSendMessage}
+          >
+            <i className="ri-send-plane-2-fill"></i>
+          </button>
+        </div>
+      </footer>
+    </>
+  );
+};
+
+export default ChatInput;
